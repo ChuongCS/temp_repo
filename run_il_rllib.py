@@ -237,7 +237,7 @@ if ALG == "SAC":
                     local_dir=SAVE_RESULTS_PATH,
                     checkpoint_freq=checkpoint_freq,
                     verbose=2,
-                    stop= {"timesteps_total": 5000000} # 10000000
+                    stop= {"timesteps_total": 10000000} # 10000000
                     )
     ray.shutdown()
     #sys.exit()
