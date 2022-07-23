@@ -225,7 +225,7 @@ class ImitationGymEnv(quadruped_gym_env.QuadrupedGymEnv):
       enable_action_interpolation=True, # does nothing
       enable_action_filter=False ,  # this is good to have True (debatable)
       render=False,
-      record_video=False,
+      record_video=True,
       env_randomizer=None,
       randomize_dynamics=True,
       add_terrain_noise=False,
@@ -574,8 +574,11 @@ class ImitationGymEnv(quadruped_gym_env.QuadrupedGymEnv):
         # self.curr_opt_traj += 1
         # if self.curr_opt_traj >= self.num_opt_trajs:
         #   self.curr_opt_traj = 0
-        self.curr_opt_traj = np.random.randint(0,self.num_opt_trajs)
-        self._traj_task = TrajTaskMotionData(filename=self.opt_traj_filenames[self.curr_opt_traj],dt=0.001,useCartesianData=self._useTrajCartesianData)
+        self.curr_opt_traj = np.random.randint(0, self.num_opt_trajs)
+
+        # print(self.curr_opt_traj)
+        self._traj_task = TrajTaskMotionData(filename=self.opt_traj_filenames[self.curr_opt_traj], dt=0.001, useCartesianData=self._useTrajCartesianData)
+        print(self.opt_traj_filenames)
         # add box according to height, distance
         #_CHASSIS_NAME_PATTERN = re.compile(r"\w*floating_base\w*")
         curr_traj_name = os.path.basename(self.opt_traj_filenames[self.curr_opt_traj])
@@ -586,9 +589,10 @@ class ImitationGymEnv(quadruped_gym_env.QuadrupedGymEnv):
         if jump_dist < .3:
           jump_dist = float(curr_traj_name[24:27])/100
         if self._is_render and jump_dist > 0.5:
+          # print("CHUONG Debug")
           print('Current traj is:', curr_traj_name)
           print('Adding box at h', jump_height, 'd', jump_dist)
-          self.add_box_at(jump_height,jump_dist)
+          self.add_box_at(jump_height, jump_dist)
       
       self._robot_config.INIT_POSITION = [0, 0, 0.2]
       rand_front = 0
@@ -670,6 +674,8 @@ class ImitationGymEnv(quadruped_gym_env.QuadrupedGymEnv):
     q_des = self._traj_task.get_joint_pos_from_state(des_state)
     self._robot.SetJointStates(np.concatenate((q_des,[0]*12)))
 
+
+
     ground_mu_k = 1#0.5#+0.5*np.random.random()
     self._pybullet_client.changeDynamics(self.plane, -1, lateralFriction=ground_mu_k)
     if self._randomize_dynamics:
@@ -729,6 +735,8 @@ class ImitationGymEnv(quadruped_gym_env.QuadrupedGymEnv):
     #print('base pos after init', self._robot.GetBasePosition())
 
     if self._is_record_video:
+    # if True:
+      print("start record")
       curr_traj_name = os.path.basename(self.opt_traj_filenames[self.curr_opt_traj])
       self.recordVideoHelper(extra_filename=curr_traj_name[:-4])
 
@@ -1084,6 +1092,7 @@ class ImitationGymEnv(quadruped_gym_env.QuadrupedGymEnv):
 
     self._dt_motor_torques = []
     self._dt_motor_velocities = []
+    self._dt_torques_velocities = []
 
     for i in range(self._task_env_num):
       for j in range(self._action_repeat): # check line 280
@@ -1101,6 +1110,8 @@ class ImitationGymEnv(quadruped_gym_env.QuadrupedGymEnv):
         if self._is_render:
           time.sleep(0.001)
           self._render_step_helper()
+
+    self._dt_torques_velocities = np.concatenate((self._dt_motor_torques, self._dt_motor_velocities))
 
     # only learning on ground, so this MUST execute
     #_,_,_,feetInContactBool = self._robot.GetContactInfo()
@@ -1158,12 +1169,16 @@ class ImitationGymEnv(quadruped_gym_env.QuadrupedGymEnv):
             self._render_step_helper()
 
 
-      return np.array(self._noisy_observation()), reward, done, {}
+      # return np.array(self._noisy_observation()), reward, done, {}
+      # return np.array(self._noisy_observation()), reward, done, info
+      # return np.array(self._noisy_observation()), reward, done, {"torque": self._dt_motor_torques}
+      return np.array(self._noisy_observation()), reward, done, {"torques_velocities": self._dt_torques_velocities}
 
     raise ValueError('SHOULD NEVER GET HERE', self.get_sim_time())
 
   def step(self, action):
     """ Step forward the simulation, given the action. """
+    print("I am in step")
     if self._task_env == "FULL_TRAJ":
       #print('action', action)
       return self.step_full_traj(action)
@@ -1179,6 +1194,9 @@ class ImitationGymEnv(quadruped_gym_env.QuadrupedGymEnv):
     if self._enable_action_filter:
       curr_act = self._action_filter(curr_act)
     #print(self._action_repeat, self._sim_step_counter, self._time_step)
+
+    self._dt_motor_torques = []
+
     for _ in range(self._action_repeat): # 10
 
       # if self._enable_action_filter:
@@ -1201,6 +1219,7 @@ class ImitationGymEnv(quadruped_gym_env.QuadrupedGymEnv):
         time.sleep(0.001)
         self._render_step_helper()
 
+    self._dt_motor_torques.append(self._robot.GetMotorTorques())
 
     # check if off the ground, if so then sim until end of trajectory open loop
     #if self.get_sim_time() > FLIGHT_TIME_START: # "PREJUMP_ONLY" in self._task_mode and
@@ -1272,6 +1291,14 @@ class ImitationGymEnv(quadruped_gym_env.QuadrupedGymEnv):
       return 1
     if x >= -x_max and x< x_max:
       return 0
+
+  def linear_penalty(self, x, x_max):
+    if x > x_max :
+      return x-x_max
+    if x < -x_max:
+      return -x_max-x
+    if x >= -x_max and x< x_max:
+      return 0
   ######################################################################################
   # Termination and reward
   ######################################################################################
@@ -1324,11 +1351,11 @@ class ImitationGymEnv(quadruped_gym_env.QuadrupedGymEnv):
         # print("get joint velocity: ", self._dt_motor_velocities[i][j])
         voltage = (0.5 * self._dt_motor_torques[i][j] * self._alpha_motor/self._gear_ratio + self._dt_motor_velocities[i][j]* self._gear_ratio) * Kt
         # print("voltage: ", voltage)
-        voltage_constraints_reward += self.uniform_penalty(voltage, self._voltage_max)
+        voltage_constraints_reward += self.linear_penalty(voltage, self._voltage_max)
 
       current = np.dot(np.ones(12), self._dt_motor_torques[i])/(self._gear_ratio * Kt)
       # print("current: ", current)
-      current_constraints_reward += self.uniform_penalty(current, self._current_max)
+      current_constraints_reward += self.linear_penalty(current, self._current_max)
 
     # for tau, vel in zip(self._dt_motor_torques, self._dt_motor_velocities):
     #   energy_reward += np.abs(np.dot(tau, vel)) * self._time_step
